@@ -1,0 +1,6 @@
+PySide6==6.6.1
+playwright==1.40.0
+python-dotenv
+requests
+cryptography
+urllib3
