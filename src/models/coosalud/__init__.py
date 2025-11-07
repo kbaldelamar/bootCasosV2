@@ -1,0 +1,1 @@
+# Paquete para modelos de datos de Coosalud

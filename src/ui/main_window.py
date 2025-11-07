@@ -13,9 +13,7 @@ from src.core.config import config
 from src.license.license_manager import LicenseManager, LicenseException
 from src.ui.license_dialog import LicenseDialog
 from src.ui.pages.home_page import HomePage
-from src.ui.pages.api_page import ApiPage
-from src.ui.pages.playwright_page import PlaywrightPage
-from src.ui.pages.settings_page import SettingsPage
+from src.ui.coosalud.gestion_autorizaciones_window import GestionAutorizacionesWindow
 
 
 class MainWindow(QMainWindow):
@@ -75,15 +73,10 @@ class MainWindow(QMainWindow):
         
         # Crear páginas
         self.home_page = HomePage(self.license_manager)  # Pasar la instancia
-        self.api_page = ApiPage()
-        self.playwright_page = PlaywrightPage()
-        self.settings_page = SettingsPage()
+        self.coosalud_page = None  # Se creará cuando sea necesario
         
         # Añadir páginas al stack
         self.stacked_widget.addWidget(self.home_page)
-        self.stacked_widget.addWidget(self.api_page)
-        self.stacked_widget.addWidget(self.playwright_page)
-        self.stacked_widget.addWidget(self.settings_page)
         
         # Mostrar página de inicio por defecto
         self.stacked_widget.setCurrentWidget(self.home_page)
@@ -110,38 +103,14 @@ class MainWindow(QMainWindow):
         home_action.triggered.connect(lambda: self.show_page(self.home_page))
         nav_menu.addAction(home_action)
         
-        # Acción API
-        api_action = QAction('&API', self)
-        api_action.setShortcut('Ctrl+A')
-        api_action.triggered.connect(lambda: self.show_page(self.api_page))
-        nav_menu.addAction(api_action)
-        
-        # Acción Playwright
-        playwright_action = QAction('&Playwright', self)
-        playwright_action.setShortcut('Ctrl+P')
-        playwright_action.triggered.connect(lambda: self.show_page(self.playwright_page))
-        nav_menu.addAction(playwright_action)
-        
-        nav_menu.addSeparator()
-        
-        # Acción Configuración
-        settings_action = QAction('&Configuración', self)
-        settings_action.setShortcut('Ctrl+S')
-        settings_action.triggered.connect(lambda: self.show_page(self.settings_page))
-        nav_menu.addAction(settings_action)
+        # Acción Gestionar Autorizaciones Coosalud
+        coosalud_action = QAction('&Gestionar Autorizaciones Coosalud', self)
+        coosalud_action.setShortcut('Ctrl+G')
+        coosalud_action.triggered.connect(self.show_coosalud_page)
+        nav_menu.addAction(coosalud_action)
         
         # Menú Herramientas
         tools_menu = menubar.addMenu('&Herramientas')
-        
-        # Acción Verificar Licencia
-        check_license_action = QAction('&Verificar Licencia', self)
-        check_license_action.triggered.connect(self.check_license_manual)
-        tools_menu.addAction(check_license_action)
-        
-        # Acción Gestionar Licencia
-        manage_license_action = QAction('&Gestionar Licencia', self)
-        manage_license_action.triggered.connect(self.show_license_dialog)
-        tools_menu.addAction(manage_license_action)
         
         # Menú Ayuda
         help_menu = menubar.addMenu('&Ayuda')
@@ -383,6 +352,65 @@ class MainWindow(QMainWindow):
             <p>Desarrollado con Python y tecnologías modernas.</p>
             """
         )
+    
+    def show_coosalud_page(self):
+        """Muestra la página de gestión de autorizaciones Coosalud."""
+        try:
+            # Verificar que la licencia tenga la característica necesaria
+            if not self.license_manager.has_feature('api_access'):
+                QMessageBox.warning(
+                    self,
+                    "Funcionalidad Restringida",
+                    "Su licencia no incluye acceso a las funcionalidades de API.\n"
+                    "Contacte con soporte para actualizar su licencia."
+                )
+                return
+            
+            # Crear la página de Coosalud si no existe
+            if self.coosalud_page is None:
+                self.coosalud_page = GestionAutorizacionesWindow()
+                self.stacked_widget.addWidget(self.coosalud_page)
+            
+            # Mostrar la página
+            self.show_page(self.coosalud_page)
+            
+            self.logger.info("Página de gestión de autorizaciones Coosalud mostrada")
+            
+        except Exception as e:
+            self.logger.error(f"Error mostrando página de Coosalud: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"No se pudo abrir la página de gestión de autorizaciones:\n\n{e}"
+            )
+    
+    def show_coosalud_window(self):
+        """Muestra la ventana de gestión de autorizaciones Coosalud."""
+        try:
+            # Verificar que la licencia tenga la característica necesaria
+            if not self.license_manager.has_feature('api_access'):
+                QMessageBox.warning(
+                    self,
+                    "Funcionalidad Restringida",
+                    "Su licencia no incluye acceso a las funcionalidades de API.\n"
+                    "Contacte con soporte para actualizar su licencia."
+                )
+                return
+            
+            # Crear y mostrar ventana de Coosalud
+            self.coosalud_window = GestionAutorizacionesWindow()
+            self.coosalud_window.setWindowModality(Qt.ApplicationModal)  # Modal
+            self.coosalud_window.show()
+            
+            self.logger.info("Ventana de gestión de autorizaciones Coosalud abierta")
+            
+        except Exception as e:
+            self.logger.error(f"Error abriendo ventana de Coosalud: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"No se pudo abrir la ventana de gestión de autorizaciones:\n\n{e}"
+            )
     
     def apply_dark_theme(self):
         """Aplica un tema oscuro a la aplicación."""
