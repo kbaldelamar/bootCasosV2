@@ -18,9 +18,13 @@ class ServicioCaptcha:
         self.callback_log = callback_log
         self.logger = logging.getLogger(f"{__name__}.{contexto}")
         
-        # Configuración de 2Captcha
-        self.api_key = config.get('automation.captcha_api_key', '857a4d41a543d0168a59504919ad5807')
-        self.site_key = '6LdlqfwhAAAAANGjtq9te3mKQZwqgoey8tOZ44ua'
+        # Obtener configuración
+        from ..modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
+        self.configuracion = ConfiguracionAutomatizacion()
+        
+        # Configuración de 2Captcha desde ConfiguracionAutomatizacion
+        self.api_key = self.configuracion.captcha_api_key
+        self.site_key = self.configuracion.captcha_site_key
         
         # Inicializar cliente 2Captcha
         self.solver = TwoCaptcha(self.api_key) if self.api_key else None
@@ -28,11 +32,40 @@ class ServicioCaptcha:
         self.logger.info(f"ServicioCaptcha inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback."""
-        getattr(self.logger, nivel)(mensaje)
+        """Envía log limpiando TODOS los emojis."""
+        # Lista COMPLETA de emojis a reemplazar
+        mensaje_limpio = (mensaje
+            .replace("🔍", "[SEARCH]")
+            .replace("🧩", "[CAPTCHA]")
+            .replace("⏳", "[WAIT]")
+            .replace("✅", "[OK]")
+            .replace("❌", "[ERROR]")
+            .replace("⚠️", "[WARN]")
+            .replace("🎯", "[TARGET]")
+            .replace("🔄", "[RETRY]")
+            .replace("💥", "[FAIL]")
+            .replace("🎉", "[SUCCESS]")
+            .replace("🤖", "[BOT]")
+            .replace("📤", "[SEND]")
+            .replace("💰", "[MONEY]")
+            .replace("ℹ️", "[INFO]")
+            .replace("🔘", "[BUTTON]")    
+            .replace("🖱️", "[CLICK]")
+            .replace("📋", "[FORM]")
+            .replace("🔑", "[KEY]")
+        )
+
+        # Resto del código igual...
+        import inspect
+        frame = inspect.currentframe().f_back
+        metodo_actual = frame.f_code.co_name
+        clase_actual = self.__class__.__name__
+        mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
+
+        getattr(self.logger, nivel)(mensaje_con_contexto)
         if self.callback_log:
             try:
-                self.callback_log(f"{self.contexto}: {mensaje}", nivel, self.contexto)
+                self.callback_log(f"{self.contexto}: {mensaje_con_contexto}", nivel, self.contexto)
             except Exception:
                 pass
     
@@ -73,7 +106,7 @@ class ServicioCaptcha:
     
     async def resolver_captcha(self) -> Optional[str]:
         """
-        Resuelve el captcha usando la API de 2Captcha.
+        Resuelve el captcha usando la API de 2Captcha exactamente como el método que funciona.
         
         Returns:
             str: Token de respuesta del captcha o None si falla
@@ -89,17 +122,19 @@ class ServicioCaptcha:
             if not url_actual:
                 raise Exception("No se pudo obtener URL actual")
             
-            self._log("⏳ Enviando captcha a 2Captcha para resolución...")
+            self._log("⏳ Enviado para resolver...")
             
-            # Resolver captcha con reCAPTCHA v2
+            # Usar el método oficial de la API: recaptcha()
             resultado = self.solver.recaptcha(
                 sitekey=self.site_key,
                 url=url_actual
             )
             
+            # Extraer el token como en la API oficial
             if resultado and 'code' in resultado:
-                token = resultado['code']
-                self._log("✅ Captcha resuelto exitosamente")
+                token = str(resultado['code'])  # Extraer el token del resultado
+                self._log(f"✅ Captcha resuelto exitosamente - Token: {token}")
+                print(f"Successfully solved the captcha. Captcha token: {token}")
                 return token
             else:
                 raise Exception("Respuesta inválida de 2Captcha")
@@ -110,11 +145,12 @@ class ServicioCaptcha:
     
     async def enviar_respuesta_captcha(self, token: str) -> bool:
         """
-        Envía la respuesta del captcha al formulario.
-        
+        Envía la respuesta del captcha al formulario usando el script que funciona.
+        Método idéntico al de tu clase LoginService que ya funciona.
+
         Args:
             token: Token de respuesta del captcha
-            
+
         Returns:
             bool: True si se envió correctamente
         """
@@ -122,55 +158,121 @@ class ServicioCaptcha:
             page = self.gestor_navegador.page
             if not page:
                 raise Exception("No hay página activa")
-            
+
             self._log("📤 Enviando respuesta de captcha al formulario...")
-            
-            # Script para inyectar la respuesta del captcha
-            script_captcha = f"""
-            function retrieveCallback(obj, visited = new Set()) {{
-                if (typeof obj === 'function') return obj;
-                for (const key in obj) {{
-                    if (!visited.has(obj[key])) {{
-                        visited.add(obj[key]);
-                        if (typeof obj[key] === 'object' || typeof obj[key] === 'function') {{
-                            const value = retrieveCallback(obj[key], visited);
-                            if (value) {{
-                                return value;
+
+            # Log del token para debug
+            print(f"Token a enviar: {token}")
+            self._log(f"Token recibido: {token}")
+
+            # Script usando template string de JavaScript - NO usar json.dumps
+            # Playwright usa página.evaluate() que ya maneja correctamente los argumentos
+            script_captcha = """
+            (function(captchaToken) {
+                function retrieveCallback(obj, visited = new Set()) {
+                    if (typeof obj === 'function') return obj;
+                    for (const key in obj) {
+                        if (!visited.has(obj[key])) {
+                            visited.add(obj[key]);
+                            if (typeof obj[key] === 'object' || typeof obj[key] === 'function') {
+                                const value = retrieveCallback(obj[key], visited);
+                                if (value) {
+                                    return value;
+                                }
+                            }
+                            visited.delete(obj[key]);
+                        }
+                    }
+                }
+                const callback = retrieveCallback(window.___grecaptcha_cfg.clients[0]);
+                if (typeof callback === 'function') {
+                    callback(captchaToken);
+                    return true;
+                } else {
+                    throw new Error('Callback function not found.');
+                }
+            })
+            """
+
+            # Debug: mostrar el script final que se va a ejecutar
+            self._log(f"Script JavaScript preparado para ejecutar")
+            self._log(f"--- INICIO SCRIPT ---")
+            self._log(script_captcha)
+            self._log(f"--- FIN SCRIPT ---")
+
+            # Ejecutar el script - Playwright maneja el argumento automáticamente
+            try:
+                self._log("Llamando a evaluate con el código del captcha...")
+
+                # MÉTODO 1: Pasar el token como argumento (RECOMENDADO)
+                resultado = await page.evaluate(script_captcha, token)
+                self._log(f"✅ Captcha resuelto con éxito. Resultado: {resultado}")
+
+            except Exception as e1:
+                self._log(f"⚠️ Error con script usando argumento: {e1}", "error")
+
+                # MÉTODO 2: Fallback - Inyectar directamente con formato string
+                self._log("Intentando con método alternativo de inyección directa...")
+                try:
+                    # Escapar comillas en el token
+                    token_escapado = token.replace('\\', '\\\\').replace("'", "\\'")
+
+                    script_directo = f"""
+                    (function() {{
+                        function retrieveCallback(obj, visited = new Set()) {{
+                            if (typeof obj === 'function') return obj;
+                            for (const key in obj) {{
+                                if (!visited.has(obj[key])) {{
+                                    visited.add(obj[key]);
+                                    if (typeof obj[key] === 'object' || typeof obj[key] === 'function') {{
+                                        const value = retrieveCallback(obj[key], visited);
+                                        if (value) {{
+                                            return value;
+                                        }}
+                                    }}
+                                    visited.delete(obj[key]);
+                                }}
                             }}
                         }}
-                        visited.delete(obj[key]);
-                    }}
-                }}
-            }}
-            
-            try {{
-                const callback = retrieveCallback(window.___grecaptcha_cfg.clients[0]);
-                if (typeof callback === 'function') {{
-                    callback('{token}');
-                    return true;
-                }} else {{
-                    throw new Error('Callback function not found.');
-                }}
-            }} catch (error) {{
-                console.error('Error executing captcha callback:', error);
-                return false;
-            }}
-            """
-            
-            # Ejecutar el script
-            resultado = await page.evaluate(script_captcha)
-            
-            if resultado:
-                self._log("✅ Respuesta de captcha enviada correctamente")
-                
-                # Esperar un momento para que se procese
-                await page.wait_for_timeout(2000)
-                return True
-            else:
-                raise Exception("El script de captcha no se ejecutó correctamente")
-                
+                        const callback = retrieveCallback(window.___grecaptcha_cfg.clients[0]);
+                        if (typeof callback === 'function') {{
+                            callback('{token_escapado}');
+                            return true;
+                        }} else {{
+                            throw new Error('Callback function not found.');
+                        }}
+                    }})();
+                    """
+
+                    resultado = await page.evaluate(script_directo)
+                    self._log(f"✅ Captcha resuelto con método alternativo. Resultado: {resultado}")
+
+                except Exception as e2:
+                    self._log(f"❌ Error con método alternativo: {e2}", "error")
+
+                    # MÉTODO 3: Último intento - Script muy simplificado
+                    self._log("Último intento con script ultra-simplificado...")
+                    try:
+                        token_escapado = token.replace('\\', '\\\\').replace("'", "\\'")
+                        script_simple = f"""
+                        window.___grecaptcha_cfg.clients[0].callback('{token_escapado}');
+                        """
+                        await page.evaluate(script_simple)
+                        self._log("✅ Captcha resuelto con script simplificado.")
+
+                    except Exception as e3:
+                        self._log(f"❌ Todos los métodos fallaron. Último error: {e3}", "error")
+                        return False
+
+            # Esperar un momento para que se procese
+            await page.wait_for_timeout(2000)
+            self._log("✅ Respuesta de captcha enviada correctamente")
+            return True
+
         except Exception as e:
             self._log(f"❌ Error enviando respuesta de captcha: {e}", "error")
+            import traceback
+            self._log(f"Traceback completo:\n{traceback.format_exc()}", "error")
             return False
     
     async def resolver_captcha_completo(self) -> bool:
@@ -269,9 +371,7 @@ class ServicioCaptcha:
                 return None
             
             balance = self.solver.balance()
-            self._log(f"💰 Balance 2Captcha: ${balance}")
             return float(balance)
             
         except Exception as e:
-            self._log(f"❌ Error obteniendo balance 2Captcha: {e}", "warning")
             return None

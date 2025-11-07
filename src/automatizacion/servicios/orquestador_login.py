@@ -5,6 +5,7 @@ Responsabilidad única: Coordinar el proceso completo de autenticación.
 import logging
 from typing import Optional, Callable
 from ..nucleo.gestor_navegador import GestorNavegador
+from ..modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
 from .servicio_login import ServicioLogin
 from .servicio_captcha import ServicioCaptcha
 from .servicio_verificacion import ServicioVerificacion
@@ -13,25 +14,43 @@ from .servicio_verificacion import ServicioVerificacion
 class OrquestadorLogin:
     """Orquestador responsable de coordinar todo el proceso de login."""
     
-    def __init__(self, gestor_navegador: GestorNavegador, contexto: str, callback_log: Optional[Callable] = None):
+    def __init__(self, gestor_navegador: GestorNavegador, configuracion: ConfiguracionAutomatizacion, contexto: str, callback_log: Optional[Callable] = None):
         self.gestor_navegador = gestor_navegador
+        self.configuracion = configuracion
         self.contexto = contexto
         self.callback_log = callback_log
         self.logger = logging.getLogger(f"{__name__}.{contexto}")
         
-        # Servicios de login
-        self.servicio_login = ServicioLogin(gestor_navegador, contexto, callback_log)
+        # Servicios de login con configuración
+        self.servicio_login = ServicioLogin(gestor_navegador, configuracion, contexto, callback_log)
         self.servicio_captcha = ServicioCaptcha(gestor_navegador, contexto, callback_log)
         self.servicio_verificacion = ServicioVerificacion(gestor_navegador, contexto, callback_log)
         
         self.logger.info(f"OrquestadorLogin inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback."""
-        getattr(self.logger, nivel)(mensaje)
+        """Envía log tanto al logger como al callback, sin emojis problemáticos."""
+        # Reemplazar emojis problemáticos
+        mensaje_limpio = (mensaje
+                         .replace("🔍", "[SEARCH]")
+                         .replace("✅", "[OK]")
+                         .replace("❌", "[ERROR]")
+                         .replace("⚠️", "[WARN]")
+                         .replace("🔄", "[RESTART]")
+                         .replace("🔐", "[AUTH]")
+                         .replace("🎉", "[SUCCESS]"))
+        
+        # Agregar información del método actual
+        import inspect
+        frame = inspect.currentframe().f_back
+        metodo_actual = frame.f_code.co_name
+        clase_actual = self.__class__.__name__
+        mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
+        
+        getattr(self.logger, nivel)(mensaje_con_contexto)
         if self.callback_log:
             try:
-                self.callback_log(f"{self.contexto}: {mensaje}", nivel, self.contexto)
+                self.callback_log(f"{self.contexto}: {mensaje_con_contexto}", nivel, self.contexto)
             except Exception:
                 pass
     
@@ -80,7 +99,7 @@ class OrquestadorLogin:
             return True
             
         except Exception as e:
-            self._log(f"💥 Error en proceso de login: {e}", "error")
+            self._log(f"[ERROR] Error en proceso de login: {e}", "error")
             return False
     
     async def ejecutar_login_basico(self) -> bool:
