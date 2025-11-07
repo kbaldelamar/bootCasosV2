@@ -32,31 +32,36 @@ class ServicioCaptcha:
         self.logger.info(f"ServicioCaptcha inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback, sin emojis problemáticos."""
-        # Reemplazar emojis problemáticos
+        """Envía log limpiando TODOS los emojis."""
+        # Lista COMPLETA de emojis a reemplazar
         mensaje_limpio = (mensaje
-                         .replace("🔍", "[SEARCH]")
-                         .replace("🧩", "[CAPTCHA]")
-                         .replace("⏳", "[WAIT]")
-                         .replace("✅", "[OK]")
-                         .replace("❌", "[ERROR]")
-                         .replace("⚠️", "[WARN]")
-                         .replace("🎯", "[TARGET]")
-                         .replace("🔄", "[RETRY]")
-                         .replace("💥", "[FAIL]")
-                         .replace("🎉", "[SUCCESS]")
-                         .replace("🤖", "[BOT]")
-                         .replace("📤", "[SEND]")
-                         .replace("💰", "[MONEY]")
-                         .replace("ℹ️", "[INFO]"))
-        
-        # Agregar información del método actual
+            .replace("🔍", "[SEARCH]")
+            .replace("🧩", "[CAPTCHA]")
+            .replace("⏳", "[WAIT]")
+            .replace("✅", "[OK]")
+            .replace("❌", "[ERROR]")
+            .replace("⚠️", "[WARN]")
+            .replace("🎯", "[TARGET]")
+            .replace("🔄", "[RETRY]")
+            .replace("💥", "[FAIL]")
+            .replace("🎉", "[SUCCESS]")
+            .replace("🤖", "[BOT]")
+            .replace("📤", "[SEND]")
+            .replace("💰", "[MONEY]")
+            .replace("ℹ️", "[INFO]")
+            .replace("🔘", "[BUTTON]")    
+            .replace("🖱️", "[CLICK]")
+            .replace("📋", "[FORM]")
+            .replace("🔑", "[KEY]")
+        )
+
+        # Resto del código igual...
         import inspect
         frame = inspect.currentframe().f_back
         metodo_actual = frame.f_code.co_name
         clase_actual = self.__class__.__name__
         mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
-        
+
         getattr(self.logger, nivel)(mensaje_con_contexto)
         if self.callback_log:
             try:
@@ -142,10 +147,10 @@ class ServicioCaptcha:
         """
         Envía la respuesta del captcha al formulario usando el script que funciona.
         Método idéntico al de tu clase LoginService que ya funciona.
-        
+
         Args:
             token: Token de respuesta del captcha
-            
+
         Returns:
             bool: True si se envió correctamente
         """
@@ -153,13 +158,13 @@ class ServicioCaptcha:
             page = self.gestor_navegador.page
             if not page:
                 raise Exception("No hay página activa")
-            
+
             self._log("📤 Enviando respuesta de captcha al formulario...")
-            
+
             # Log del token para debug
             print(f"Token a enviar: {token}")
             self._log(f"Token recibido: {token}")
-            
+
             # Script usando template string de JavaScript - NO usar json.dumps
             # Playwright usa página.evaluate() que ya maneja correctamente los argumentos
             script_captcha = """
@@ -188,30 +193,30 @@ class ServicioCaptcha:
                 }
             })
             """
-            
+
             # Debug: mostrar el script final que se va a ejecutar
             self._log(f"Script JavaScript preparado para ejecutar")
             self._log(f"--- INICIO SCRIPT ---")
             self._log(script_captcha)
             self._log(f"--- FIN SCRIPT ---")
-            
+
             # Ejecutar el script - Playwright maneja el argumento automáticamente
             try:
                 self._log("Llamando a evaluate con el código del captcha...")
-                
+
                 # MÉTODO 1: Pasar el token como argumento (RECOMENDADO)
                 resultado = await page.evaluate(script_captcha, token)
                 self._log(f"✅ Captcha resuelto con éxito. Resultado: {resultado}")
-                
+
             except Exception as e1:
                 self._log(f"⚠️ Error con script usando argumento: {e1}", "error")
-                
+
                 # MÉTODO 2: Fallback - Inyectar directamente con formato string
                 self._log("Intentando con método alternativo de inyección directa...")
                 try:
                     # Escapar comillas en el token
                     token_escapado = token.replace('\\', '\\\\').replace("'", "\\'")
-                    
+
                     script_directo = f"""
                     (function() {{
                         function retrieveCallback(obj, visited = new Set()) {{
@@ -238,13 +243,13 @@ class ServicioCaptcha:
                         }}
                     }})();
                     """
-                    
+
                     resultado = await page.evaluate(script_directo)
                     self._log(f"✅ Captcha resuelto con método alternativo. Resultado: {resultado}")
-                    
+
                 except Exception as e2:
                     self._log(f"❌ Error con método alternativo: {e2}", "error")
-                    
+
                     # MÉTODO 3: Último intento - Script muy simplificado
                     self._log("Último intento con script ultra-simplificado...")
                     try:
@@ -254,16 +259,16 @@ class ServicioCaptcha:
                         """
                         await page.evaluate(script_simple)
                         self._log("✅ Captcha resuelto con script simplificado.")
-                        
+
                     except Exception as e3:
                         self._log(f"❌ Todos los métodos fallaron. Último error: {e3}", "error")
                         return False
-            
+
             # Esperar un momento para que se procese
             await page.wait_for_timeout(2000)
             self._log("✅ Respuesta de captcha enviada correctamente")
             return True
-            
+
         except Exception as e:
             self._log(f"❌ Error enviando respuesta de captcha: {e}", "error")
             import traceback
@@ -366,9 +371,7 @@ class ServicioCaptcha:
                 return None
             
             balance = self.solver.balance()
-            self._log(f"💰 Balance 2Captcha: ${balance}")
             return float(balance)
             
         except Exception as e:
-            self._log(f"❌ Error obteniendo balance 2Captcha: {e}", "warning")
             return None
