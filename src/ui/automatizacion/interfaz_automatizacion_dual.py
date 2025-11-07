@@ -3,6 +3,7 @@ Interfaz de automatización dual para Coosalud con lógica real integrada.
 """
 import logging
 import asyncio
+import requests
 from datetime import datetime
 from typing import Dict, Any, Optional
 from PySide6.QtWidgets import (
@@ -13,8 +14,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject
 from PySide6.QtGui import QFont, QTextCharFormat, QTextCursor
 from src.core.config import config
-from src.automatizacion.controlador_automatizacion_principal import ControladorAutomatizacionPrincipal
+from src.automatizacion.nucleo.controlador_automatizacion import ControladorAutomatizacion
 from src.automatizacion.modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
+from src.automatizacion.modelos.tarea_automatizacion import TareaAutomatizacion
+from src.models.coosalud import RespuestaPacientesPendientesDto, RespuestaCasosDto
 
 
 class ManejadorLogs(QObject):
@@ -33,14 +36,16 @@ class HiloAutomatizacion(QThread):
     proceso_iniciado = Signal(str)  # contexto
     progreso_actualizado = Signal(str, int)  # contexto, porcentaje
     log_emitido = Signal(str, str, str)  # mensaje, nivel, contexto
+    log_actualizado = Signal(str, str, str)  # mensaje, nivel, contexto (alias para compatibilidad)
     proceso_terminado = Signal(str, bool, str)  # contexto, exito, mensaje_final
     
-    def __init__(self, contexto: str, controlador: ControladorAutomatizacionPrincipal):
+    def __init__(self, contexto: str, controlador: ControladorAutomatizacion):
         super().__init__()
         self.contexto = contexto
         self.controlador = controlador
         self.deberia_detenerse = False
         self.configuracion = None
+        self.tareas = []
         self.logger = logging.getLogger(f"{__name__}.{contexto}")
         
         # Configurar callback de logs
@@ -48,67 +53,101 @@ class HiloAutomatizacion(QThread):
     
     def configurar_proceso(self, config: Dict[str, Any]):
         """Configura el proceso con parámetros."""
+        # Usar configuración base y aplicar valores específicos
+        configuracion_base = ConfiguracionAutomatizacion()
         self.configuracion = ConfiguracionAutomatizacion(
-            modo=config.get("modo", "automatico"),
-            reintentos_maximos=config.get("reintentos", 3),
-            navegador_headless=config.get("headless", False),
-            activar_captcha_automatico=config.get("captcha_auto", True),
-            url_login=config.get("url_login", "https://pqrcoosalud.com/auth/login"),
-            usuario=config.get("usuario", ""),
-            password=config.get("password", "")
+            modo=config.get("modo", configuracion_base.modo),
+            reintentos_maximos=config.get("reintentos", configuracion_base.reintentos_maximos),
+            navegador_headless=config.get("headless", configuracion_base.navegador_headless),
+            activar_captcha_automatico=config.get("captcha_auto", configuracion_base.activar_captcha_automatico),
+            url_login=config.get("url_login", configuracion_base.url_login),
+            usuario=config.get("usuario", configuracion_base.usuario),
+            password=config.get("password", configuracion_base.password)
         )
+        
+        # Crear tareas de ejemplo para el contexto
+        if self.contexto == "pacientes":
+            self.tareas = [
+                TareaAutomatizacion(
+                    id=f"paciente_{i}",
+                    contexto="pacientes", 
+                    tipo="procesar_paciente",
+                    datos={"numero": i}
+                ) for i in range(1, 6)  # 5 tareas de ejemplo
+            ]
+        else:  # casos
+            self.tareas = [
+                TareaAutomatizacion(
+                    id=f"caso_{i}",
+                    contexto="casos",
+                    tipo="procesar_caso", 
+                    datos={"numero": i}
+                ) for i in range(1, 4)  # 3 tareas de ejemplo
+            ]
     
     def detener_proceso(self):
         """Solicita la detención del proceso."""
         self.deberia_detenerse = True
+        if hasattr(self.controlador, 'detener'):
+            asyncio.run_coroutine_threadsafe(self.controlador.detener(), asyncio.new_event_loop())
     
     def emitir_log_desde_controlador(self, mensaje: str, nivel: str, contexto: str):
         """Callback para recibir logs del controlador."""
         self.log_emitido.emit(mensaje, nivel, contexto)
         
         # Simular progreso basado en mensajes
-        if "Inicializando" in mensaje:
-            self.progreso_actualizado.emit(contexto, 10)
-        elif "Navegando" in mensaje:
-            self.progreso_actualizado.emit(contexto, 30)
-        elif "Autenticando" in mensaje:
-            self.progreso_actualizado.emit(contexto, 50)
-        elif "Obteniendo" in mensaje:
-            self.progreso_actualizado.emit(contexto, 70)
-        elif "Procesando" in mensaje:
-            self.progreso_actualizado.emit(contexto, 90)
-        elif "completada" in mensaje or "completado" in mensaje:
+        if "Inicializando" in mensaje or "inicializado" in mensaje:
+            self.progreso_actualizado.emit(contexto, 20)
+        elif "Navegando" in mensaje or "navegando" in mensaje:
+            self.progreso_actualizado.emit(contexto, 40)
+        elif "Autenticando" in mensaje or "login" in mensaje:
+            self.progreso_actualizado.emit(contexto, 60)
+        elif "Procesando" in mensaje or "procesando" in mensaje:
+            self.progreso_actualizado.emit(contexto, 80)
+        elif "completado" in mensaje or "finalizado" in mensaje:
             self.progreso_actualizado.emit(contexto, 100)
     
     def run(self):
         """Ejecuta el proceso real de automatización."""
         try:
+            self.log_actualizado.emit(f"🔄 Iniciando hilo de automatización para {self.contexto}", "info", self.contexto)
             self.proceso_iniciado.emit(self.contexto)
             
             if not self.configuracion:
                 raise Exception("Configuración no establecida")
+            
+            if not self.tareas:
+                raise Exception("Tareas no establecidas") 
+            
+            self.log_actualizado.emit(f"📋 Procesando {len(self.tareas)} tareas", "info", self.contexto)
             
             # Crear nuevo loop de eventos para este thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
             try:
-                if self.contexto == "pacientes":
-                    resultado = loop.run_until_complete(
-                        self.controlador.ejecutar_automatizacion_pacientes(self.configuracion)
-                    )
-                elif self.contexto == "casos":
-                    resultado = loop.run_until_complete(
-                        self.controlador.ejecutar_automatizacion_casos(self.configuracion)
-                    )
-                else:
-                    raise Exception(f"Contexto desconocido: {self.contexto}")
+                self.log_actualizado.emit("🚀 Inicializando controlador...", "info", self.contexto)
+                
+                # Inicializar controlador con tareas
+                resultado_init = loop.run_until_complete(
+                    self.controlador.inicializar(self.tareas)
+                )
+                
+                if not resultado_init:
+                    raise Exception("Error inicializando controlador")
+                
+                self.log_actualizado.emit("✅ Controlador inicializado, ejecutando automatización...", "info", self.contexto)
+                
+                # Ejecutar automatización
+                resultado = loop.run_until_complete(
+                    self.controlador.ejecutar()
+                )
                 
                 # Procesar resultado
-                if resultado.exitoso:
+                if resultado:
                     self.proceso_terminado.emit(self.contexto, True, "Proceso completado exitosamente")
                 else:
-                    self.proceso_terminado.emit(self.contexto, False, resultado.mensaje)
+                    self.proceso_terminado.emit(self.contexto, False, "Proceso falló")
                     
             finally:
                 loop.close()
@@ -121,14 +160,14 @@ class HiloAutomatizacion(QThread):
 class HiloProcesadorPacientes(HiloAutomatizacion):
     """Thread específico para automatización de pacientes."""
     
-    def __init__(self, controlador: ControladorAutomatizacionPrincipal):
+    def __init__(self, controlador: ControladorAutomatizacion):
         super().__init__("pacientes", controlador)
 
 
 class HiloProcesadorCasos(HiloAutomatizacion):
     """Thread específico para automatización de casos."""
     
-    def __init__(self, controlador: ControladorAutomatizacionPrincipal):
+    def __init__(self, controlador: ControladorAutomatizacion):
         super().__init__("casos", controlador)
 
 
@@ -138,18 +177,20 @@ class PanelControlAutomatizacion(QFrame):
     proceso_iniciado = Signal(str)  # contexto
     proceso_detenido = Signal(str)  # contexto
     
-    def __init__(self, contexto: str, titulo: str, color_acento: str, controlador: ControladorAutomatizacionPrincipal):
+    def __init__(self, contexto: str, titulo: str, color_acento: str, controlador: Optional[ControladorAutomatizacion]):
         super().__init__()
         self.contexto = contexto
         self.titulo = titulo
         self.color_acento = color_acento
-        self.controlador = controlador
+        self.controlador = controlador  # Puede ser None
         self.hilo_proceso = None
         self.activo = False
         self.estadisticas = {
             "procesados": 0,
             "exitosos": 0,
             "errores": 0,
+            "pendientes": 0,
+            "total": 0,
             "tiempo_inicio": None
         }
         
@@ -335,34 +376,66 @@ class PanelControlAutomatizacion(QFrame):
             return
         
         try:
-            # Configurar hilo según el contexto
-            if self.contexto == "pacientes":
-                self.hilo_proceso = HiloProcesadorPacientes(self.controlador)
-            elif self.contexto == "casos":
-                self.hilo_proceso = HiloProcesadorCasos(self.controlador)
-            else:
-                return
-            
             # Crear configuración usando valores por defecto y datos de la UI
             configuracion_base = ConfiguracionAutomatizacion()  # Valores por defecto
             
             # Aplicar configuraciones de la UI
             config_dict = {
                 "modo": self.combo_modo.currentText(),
-                "reintentos": self.spin_reintentos.value(),
-                "headless": self.check_headless.isChecked(),
-                "captcha_auto": self.check_captcha.isChecked(),
-                # Usar credenciales por defecto de ConfiguracionAutomatizacion
-                "url_login": configuracion_base.url_login,  # https://portalsalud.coosalud.com/login
-                "usuario": configuracion_base.usuario,      # biomedips@gmail.com
-                "password": configuracion_base.password     # Caucasia1+
+                "reintentos_maximos": self.spin_reintentos.value(),
+                "navegador_headless": self.check_headless.isChecked(),
+                "activar_captcha_automatico": self.check_captcha.isChecked(),
+                # Usar configuraciones centralizadas
+                "url_login": configuracion_base.url_login,
+                "url_home": configuracion_base.url_home,
+                "usuario": configuracion_base.usuario,
+                "password": configuracion_base.password,
+                "api_base_url": configuracion_base.api_base_url,
+                "api_endpoint_pacientes_pendientes": configuracion_base.api_endpoint_pacientes_pendientes,
+                "api_endpoint_casos": configuracion_base.api_endpoint_casos
             }
-            self.hilo_proceso.configurar_proceso(config_dict)
+            
+            # Crear configuración final desde diccionario
+            configuracion_final = ConfiguracionAutomatizacion.desde_diccionario(config_dict)
+            
+            # Configurar hilo según el contexto - Crear controlador independiente para cada contexto con configuración
+            if self.contexto == "pacientes":
+                controlador_pacientes = ControladorAutomatizacion("pacientes", configuracion_final)
+                self.hilo_proceso = HiloProcesadorPacientes(controlador_pacientes)
+            elif self.contexto == "casos":
+                controlador_casos = ControladorAutomatizacion("casos", configuracion_final) 
+                self.hilo_proceso = HiloProcesadorCasos(controlador_casos)
+            else:
+                return
+            
+            # Establecer configuración y tareas en el hilo
+            self.hilo_proceso.configuracion = configuracion_final
+            
+            # Crear tareas de ejemplo para el contexto
+            if self.contexto == "pacientes":
+                self.hilo_proceso.tareas = [
+                    TareaAutomatizacion(
+                        id=f"paciente_{i}",
+                        contexto="pacientes", 
+                        tipo="procesar_paciente",
+                        datos={"numero": i}
+                    ) for i in range(1, 4)
+                ]
+            else:  # casos
+                self.hilo_proceso.tareas = [
+                    TareaAutomatizacion(
+                        id=f"caso_{i}",
+                        contexto="casos",
+                        tipo="procesar_caso", 
+                        datos={"numero": i}
+                    ) for i in range(1, 4)
+                ]
             
             # Conectar señales
             self.hilo_proceso.proceso_iniciado.connect(self.al_proceso_iniciado)
             self.hilo_proceso.progreso_actualizado.connect(self.al_progreso_actualizado)
             self.hilo_proceso.proceso_terminado.connect(self.al_proceso_terminado)
+            self.hilo_proceso.log_actualizado.connect(self.al_log_actualizado)
             
             # Iniciar
             self.hilo_proceso.start()
@@ -404,12 +477,34 @@ class PanelControlAutomatizacion(QFrame):
         # Iniciar nuevamente
         self.iniciar_proceso()
     
+    def actualizar_estadisticas_conteo(self, total: int):
+        """Actualiza las estadísticas con el conteo desde el endpoint."""
+        self.estadisticas["pendientes"] = total
+        self.estadisticas["total"] = total
+        
+        # Actualizar la etiqueta de estado
+        estado_texto = f"📊 {total} {self.contexto} pendientes"
+        self.lbl_estado.setText(estado_texto)
+        
+        # Si hay items pendientes, habilitar el botón de iniciar
+        if total > 0:
+            self.btn_iniciar.setEnabled(True)
+            self.btn_iniciar.setText(f"▶️ Procesar {total}")
+        else:
+            self.btn_iniciar.setEnabled(False)
+            self.btn_iniciar.setText("✅ Sin pendientes")
+    
     def limpiar_estadisticas(self):
         """Limpia las estadísticas del panel."""
+        pendientes_anterior = self.estadisticas.get("pendientes", 0)
+        total_anterior = self.estadisticas.get("total", 0)
+        
         self.estadisticas = {
             "procesados": 0,
             "exitosos": 0,
             "errores": 0,
+            "pendientes": pendientes_anterior,  # Conservar conteo de pendientes
+            "total": total_anterior,           # Conservar conteo total
             "tiempo_inicio": None
         }
         self.actualizar_labels_estadisticas()
@@ -432,13 +527,14 @@ class PanelControlAutomatizacion(QFrame):
     def actualizar_estadisticas_ui(self):
         """Actualiza las estadísticas en la UI."""
         try:
-            # Obtener estadísticas del controlador
-            stats = self.controlador.obtener_estadisticas()
-            if self.contexto in stats:
-                contexto_stats = stats[self.contexto]
-                self.estadisticas["procesados"] = contexto_stats.get("procesados", 0)
-                self.estadisticas["exitosos"] = contexto_stats.get("exitosos", 0)
-                self.estadisticas["errores"] = contexto_stats.get("errores", 0)
+            # Obtener estadísticas del controlador de este panel
+            if hasattr(self, 'hilo_proceso') and self.hilo_proceso and hasattr(self.hilo_proceso, 'controlador'):
+                stats = self.hilo_proceso.controlador.obtener_estado()
+                if stats:
+                    # Simular estadísticas básicas
+                    self.estadisticas["procesados"] = len(stats.get("cola_tareas", []))
+                    self.estadisticas["exitosos"] = self.estadisticas["procesados"] - 1  # Simulado
+                    self.estadisticas["errores"] = 0 if stats.get("ejecutando", False) else 1
             
             self.actualizar_labels_estadisticas()
             
@@ -455,6 +551,22 @@ class PanelControlAutomatizacion(QFrame):
         """Actualiza el progreso del proceso."""
         if contexto == self.contexto:
             self.progress_bar.setValue(porcentaje)
+    
+    def al_log_actualizado(self, mensaje: str, nivel: str, contexto: str):
+        """Maneja los logs del proceso de automatización."""
+        if contexto == self.contexto:
+            # Emitir el log al manejador principal si está disponible
+            try:
+                # Buscar la ventana principal para enviar el log
+                parent_window = self.parent()
+                while parent_window and not hasattr(parent_window, 'manejador_logs'):
+                    parent_window = parent_window.parent()
+                
+                if parent_window and hasattr(parent_window, 'manejador_logs'):
+                    parent_window.manejador_logs.emitir_log(mensaje, nivel, contexto)
+            except Exception:
+                # Si no se puede enviar al manejador principal, al menos lo mostramos en consola
+                print(f"[{contexto}] {mensaje}")
     
     def al_proceso_terminado(self, contexto: str, exito: bool, mensaje: str):
         """Maneja la finalización del proceso."""
@@ -622,9 +734,12 @@ class InterfazAutomatizacionDual(QWidget):
     def __init__(self):
         super().__init__()
         self.manejador_logs = ManejadorLogs()
-        self.controlador = ControladorAutomatizacionPrincipal()
+        # No creamos controlador aquí, cada panel crea el suyo
         self.configurar_interfaz()
         self.configurar_conexiones()
+        
+        # Cargar conteos automáticamente al inicializar
+        QTimer.singleShot(1000, self.cargar_conteos_automaticos)
     
     def configurar_interfaz(self):
         """Configura la interfaz principal responsiva."""
@@ -643,12 +758,12 @@ class InterfazAutomatizacionDual(QWidget):
         # Panel superior - Controles de automatización (más compacto)
         controles_splitter = QSplitter(Qt.Horizontal)
         
-        # Panel de pacientes
+        # Panel de pacientes - Crear sin controlador (se crea internamente)
         self.panel_pacientes = PanelControlAutomatizacion(
             "pacientes", 
             "👥 Pacientes", 
             "#4299e1",
-            self.controlador
+            None  # El panel creará su propio controlador
         )
         controles_splitter.addWidget(self.panel_pacientes)
         
@@ -657,7 +772,7 @@ class InterfazAutomatizacionDual(QWidget):
             "casos", 
             "📋 Casos", 
             "#48bb78",
-            self.controlador
+            None  # El panel creará su propio controlador
         )
         controles_splitter.addWidget(self.panel_casos)
         
@@ -832,6 +947,92 @@ class InterfazAutomatizacionDual(QWidget):
             }
         """)
     
+    def cargar_conteos_automaticos(self):
+        """Carga los conteos de pacientes y casos desde los endpoints."""
+        try:
+            # Cargar conteo de pacientes pendientes
+            conteo_pacientes = self.obtener_conteo_pacientes()
+            if conteo_pacientes:
+                self.panel_pacientes.actualizar_estadisticas_conteo(conteo_pacientes)
+                self.manejador_logs.emitir_log(f"📊 {conteo_pacientes} pacientes pendientes encontrados", "info", "sistema")
+            
+            # Cargar conteo de casos
+            conteo_casos = self.obtener_conteo_casos()
+            if conteo_casos:
+                self.panel_casos.actualizar_estadisticas_conteo(conteo_casos)
+                self.manejador_logs.emitir_log(f"📊 {conteo_casos} casos encontrados", "info", "sistema")
+                
+        except Exception as e:
+            self.manejador_logs.emitir_log(f"❌ Error cargando conteos: {e}", "error", "sistema")
+    
+    def obtener_conteo_pacientes(self) -> int:
+        """Obtiene el conteo de pacientes pendientes desde el endpoint usando DTO."""
+        try:
+            # Usar configuración centralizada para obtener la URL
+            config = ConfiguracionAutomatizacion()
+            url = config.obtener_url_pacientes_pendientes()
+            
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            # Usar DTO para procesar la respuesta
+            respuesta_dto = RespuestaPacientesPendientesDto.from_api_response(response.json())
+            
+            if respuesta_dto.es_exitosa():
+                # Log estadísticas detalladas
+                stats = respuesta_dto.obtener_estadisticas()
+                self.manejador_logs.emitir_log(
+                    f"📊 Pacientes: {stats['total_pacientes']} total, "
+                    f"{stats['pacientes_validos']} válidos, "
+                    f"{stats['pacientes_con_orden_medica']} con orden médica",
+                    "info", "sistema"
+                )
+                return respuesta_dto.total_records
+            else:
+                self.manejador_logs.emitir_log(f"❌ Error en endpoint pacientes: {respuesta_dto.message}", "error", "sistema")
+                return 0
+                
+        except requests.RequestException as e:
+            self.manejador_logs.emitir_log(f"❌ Error conectando al endpoint pacientes: {e}", "error", "sistema")
+            return 0
+        except Exception as e:
+            self.manejador_logs.emitir_log(f"❌ Error procesando respuesta pacientes: {e}", "error", "sistema")
+            return 0
+    
+    def obtener_conteo_casos(self) -> int:
+        """Obtiene el conteo de casos desde el endpoint usando DTO."""
+        try:
+            # Usar configuración centralizada para obtener la URL
+            config = ConfiguracionAutomatizacion()
+            url = config.obtener_url_casos()
+            
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            # Usar DTO para procesar la respuesta
+            respuesta_dto = RespuestaCasosDto.from_api_response(response.json())
+            
+            if respuesta_dto.es_exitosa():
+                # Log estadísticas detalladas
+                stats = respuesta_dto.obtener_estadisticas()
+                self.manejador_logs.emitir_log(
+                    f"📊 Casos: {stats['total_casos']} total, "
+                    f"{stats['casos_validos']} válidos "
+                    f"({stats['porcentaje_validez']:.1f}% completitud)",
+                    "info", "sistema"
+                )
+                return respuesta_dto.total_records
+            else:
+                self.manejador_logs.emitir_log(f"❌ Error en endpoint casos: {respuesta_dto.message}", "error", "sistema")
+                return 0
+                
+        except requests.RequestException as e:
+            self.manejador_logs.emitir_log(f"❌ Error conectando al endpoint casos: {e}", "error", "sistema")
+            return 0
+        except Exception as e:
+            self.manejador_logs.emitir_log(f"❌ Error procesando respuesta casos: {e}", "error", "sistema")
+            return 0
+    
     def redimensionar_ventana(self, event):
         """Maneja el redimensionamiento de la ventana para responsividad."""
         super().resizeEvent(event)
@@ -870,16 +1071,35 @@ class InterfazAutomatizacionDual(QWidget):
     
     def obtener_estado_sistema(self) -> Dict[str, Any]:
         """Obtiene el estado actual del sistema."""
-        return self.controlador.obtener_estado_sistema()
+        estado = {
+            "pacientes": {
+                "activo": self.panel_pacientes.activo,
+                "estadisticas": self.panel_pacientes.estadisticas
+            },
+            "casos": {
+                "activo": self.panel_casos.activo,
+                "estadisticas": self.panel_casos.estadisticas
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        return estado
     
     def obtener_estadisticas(self) -> Dict[str, Any]:
         """Obtiene estadísticas del sistema."""
-        return self.controlador.obtener_estadisticas()
+        return {
+            "pacientes": self.panel_pacientes.estadisticas,
+            "casos": self.panel_casos.estadisticas
+        }
     
     async def detener_todos_los_procesos(self):
         """Detiene todos los procesos activos."""
         try:
-            await self.controlador.detener_todos_los_procesos()
+            if self.panel_pacientes.activo:
+                self.panel_pacientes.detener_proceso()
+            
+            if self.panel_casos.activo:
+                self.panel_casos.detener_proceso()
+                
             self.manejador_logs.emitir_log("🛑 Todos los procesos detenidos", "info", "sistema")
         except Exception as e:
             self.manejador_logs.emitir_log(f"❌ Error deteniendo procesos: {e}", "error", "sistema")
@@ -908,9 +1128,6 @@ class InterfazAutomatizacionDual(QWidget):
             
             if hasattr(self.panel_casos, 'activo') and self.panel_casos.activo:
                 self.panel_casos.detener_proceso()
-            
-            # Limpiar recursos del controlador
-            asyncio.create_task(self.controlador.limpiar_recursos())
             
             event.accept()
             

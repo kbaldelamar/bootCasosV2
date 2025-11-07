@@ -5,29 +5,47 @@ Responsabilidad única: Manejar la navegación entre páginas web.
 import logging
 from typing import Optional, Callable
 from ..nucleo.gestor_navegador import GestorNavegador
+from ..modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
 
 
 class ServicioNavegacion:
     """Servicio responsable de la navegación web."""
     
-    def __init__(self, gestor_navegador: GestorNavegador, contexto: str, callback_log: Optional[Callable] = None):
+    def __init__(self, gestor_navegador: GestorNavegador, configuracion: ConfiguracionAutomatizacion, contexto: str, callback_log: Optional[Callable] = None):
         self.gestor_navegador = gestor_navegador
+        self.configuracion = configuracion
         self.contexto = contexto
         self.callback_log = callback_log
         self.logger = logging.getLogger(f"{__name__}.{contexto}")
         
-        # URLs del sistema
-        self.url_login = "https://portalsalud.coosalud.com/login"
-        self.url_home = "https://portalsalud.coosalud.com/home"
+        # URLs centralizadas desde la configuración
+        self.url_login = self.configuracion.url_login
+        self.url_home = self.configuracion.url_home
         
         self.logger.info(f"ServicioNavegacion inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback."""
-        getattr(self.logger, nivel)(mensaje)
+        """Envía log tanto al logger como al callback, sin emojis problemáticos."""
+        # Reemplazar emojis problemáticos
+        mensaje_limpio = (mensaje
+                         .replace("🔄", "[RESTART]")
+                         .replace("✅", "[OK]")
+                         .replace("❌", "[ERROR]")
+                         .replace("⚠️", "[WARN]")
+                         .replace("🔍", "[SEARCH]")
+                         .replace("🔗", "[LINK]"))
+        
+        # Agregar información del método actual
+        import inspect
+        frame = inspect.currentframe().f_back
+        metodo_actual = frame.f_code.co_name
+        clase_actual = self.__class__.__name__
+        mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
+        
+        getattr(self.logger, nivel)(mensaje_con_contexto)
         if self.callback_log:
             try:
-                self.callback_log(f"{self.contexto}: {mensaje}", nivel, self.contexto)
+                self.callback_log(f"{self.contexto}: {mensaje_con_contexto}", nivel, self.contexto)
             except Exception:
                 pass
     

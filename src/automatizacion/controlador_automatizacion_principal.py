@@ -90,6 +90,7 @@ class ControladorAutomatizacionPrincipal:
             # Crear servicios
             servicio_navegacion = ServicioNavegacion(
                 self.gestor_navegador_pacientes, 
+                self.configuracion,
                 "pacientes", 
                 self.callback_log
             )
@@ -157,7 +158,7 @@ class ControladorAutomatizacionPrincipal:
             
             # Crear gestor de navegador independiente
             self.gestor_navegador_casos = GestorNavegador("casos")
-            if not await self.gestor_navegador_casos.inicializar():
+            if not await self.gestor_navegador_casos.iniciar_navegador():
                 raise Exception("No se pudo inicializar navegador de casos")
             
             # Crear gestor de sesión
@@ -166,6 +167,7 @@ class ControladorAutomatizacionPrincipal:
             # Crear servicios
             servicio_navegacion = ServicioNavegacion(
                 self.gestor_navegador_casos, 
+                self.configuracion,
                 "casos", 
                 self.callback_log
             )

@@ -26,11 +26,30 @@ class ServicioRecuperacion:
         self.logger.info(f"ServicioRecuperacion inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback."""
-        getattr(self.logger, nivel)(mensaje)
+        """Envía log tanto al logger como al callback, sin emojis problemáticos."""
+        # Reemplazar emojis problemáticos
+        mensaje_limpio = (mensaje
+                         .replace("✅", "[OK]")
+                         .replace("❌", "[ERROR]")
+                         .replace("⚠️", "[WARN]")
+                         .replace("🔄", "[RESTART]")
+                         .replace("⏳", "[WAIT]")
+                         .replace("💥", "[FAIL]")
+                         .replace("🧹", "[CLEAN]")
+                         .replace("🔍", "[SEARCH]")
+                         .replace("🤖", "[BOT]"))
+        
+        # Agregar información del método actual
+        import inspect
+        frame = inspect.currentframe().f_back
+        metodo_actual = frame.f_code.co_name
+        clase_actual = self.__class__.__name__
+        mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
+        
+        getattr(self.logger, nivel)(mensaje_con_contexto)
         if self.callback_log:
             try:
-                self.callback_log(f"{self.contexto}: {mensaje}", nivel, self.contexto)
+                self.callback_log(f"{self.contexto}: {mensaje_con_contexto}", nivel, self.contexto)
             except Exception:
                 pass
     

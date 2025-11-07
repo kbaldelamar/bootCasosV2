@@ -13,6 +13,7 @@ from ..servicios.servicio_navegacion import ServicioNavegacion
 from ..servicios.orquestador_login import OrquestadorLogin
 from ..modelos.estado_automatizacion import EstadoProceso
 from ..modelos.tarea_automatizacion import TareaAutomatizacion
+from ..modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
 from ..errores.clasificador_errores import ClasificadorErrores
 from ..errores.gestor_reintentos import GestorReintentos
 
@@ -20,8 +21,9 @@ from ..errores.gestor_reintentos import GestorReintentos
 class ControladorAutomatizacion:
     """Controlador principal que coordina todo el sistema de automatización."""
     
-    def __init__(self, contexto: str, callback_log: Optional[Callable] = None):
+    def __init__(self, contexto: str, configuracion: Optional[ConfiguracionAutomatizacion] = None, callback_log: Optional[Callable] = None):
         self.contexto = contexto
+        self.configuracion = configuracion if configuracion is not None else ConfiguracionAutomatizacion()
         self.logger = logging.getLogger(f"{__name__}.{contexto}")
         self.callback_log = callback_log
         
@@ -43,12 +45,31 @@ class ControladorAutomatizacion:
         self._log(f"ControladorAutomatizacion inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback."""
+        """Envía log tanto al logger como al callback, sin emojis problemáticos."""
+        # Reemplazar emojis problemáticos
+        mensaje_limpio = (mensaje
+                         .replace("✅", "[OK]")
+                         .replace("❌", "[ERROR]")
+                         .replace("⚠️", "[WARN]")
+                         .replace("🔄", "[RESTART]")
+                         .replace("📝", "[INPUT]")
+                         .replace("⏳", "[WAIT]")
+                         .replace("💥", "[FAIL]")
+                         .replace("🎉", "[SUCCESS]")
+                         .replace("🔗", "[LINK]"))
+        
+        # Agregar información del método actual
+        import inspect
+        frame = inspect.currentframe().f_back
+        metodo_actual = frame.f_code.co_name
+        clase_actual = self.__class__.__name__
+        mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
+        
         timestamp = datetime.now().strftime("%H:%M:%S")
-        mensaje_completo = f"[{timestamp}] {self.contexto}: {mensaje}"
+        mensaje_completo = f"[{timestamp}] {self.contexto}: {mensaje_con_contexto}"
         
         # Log interno
-        getattr(self.logger, nivel)(mensaje)
+        getattr(self.logger, nivel)(mensaje_con_contexto)
         
         # Callback externo si existe
         if self.callback_log:
@@ -68,7 +89,7 @@ class ControladorAutomatizacion:
             bool: True si la inicialización fue exitosa
         """
         try:
-            self._log("🚀 Iniciando sistema de automatización...")
+            self._log("[START] Iniciando sistema de automatización...")
             
             # Validar tareas
             if not tareas:
@@ -79,30 +100,32 @@ class ControladorAutomatizacion:
             self.cola_tareas = tareas.copy()
             
             # Inicializar navegador
-            self._log("🌐 Iniciando navegador...")
+            self._log("[BROWSER] Iniciando navegador...")
             if not await self.gestor_navegador.iniciar_navegador():
                 raise Exception("No se pudo iniciar el navegador")
             
             # Inicializar servicios dependientes
             self.servicio_navegacion = ServicioNavegacion(
                 self.gestor_navegador, 
+                self.configuracion,
                 self.contexto, 
                 self.callback_log
             )
    
             self.orquestador_login = OrquestadorLogin(
                 self.gestor_navegador,
+                self.configuracion,
                 self.contexto,
                 self.callback_log
             )
             
             # Navegar a página de login
-            self._log("🔗 Navegando a página de login...")
+            self._log("[NAV] Navegando a página de login...")
             if not await self.servicio_navegacion.ir_a_login():
                 raise Exception("No se pudo navegar a la página de login")
             
             # Realizar login
-            self._log("🔑 Iniciando proceso de autenticación...")
+            self._log("[AUTH] Iniciando proceso de autenticación...")
             if not await self.orquestador_login.ejecutar_login_completo():
                 raise Exception("No se pudo completar el login")
             
@@ -110,7 +133,7 @@ class ControladorAutomatizacion:
             return True
             
         except Exception as e:
-            self._log(f"❌ Error en inicialización: {e}", "error")
+            self._log(f"[ERROR] Error en inicialización: {e}", "error")
             await self._limpiar_recursos()
             return False
     
@@ -289,7 +312,7 @@ class ControladorAutomatizacion:
         """Limpia todos los recursos utilizados."""
         try:
             await self.gestor_navegador.cerrar_navegador()
-            self._log("🧹 Recursos limpiados")
+            self._log("[INFO] Recursos limpiados")
         except Exception as e:
             self._log(f"⚠️ Error limpiando recursos: {e}", "warning")
     

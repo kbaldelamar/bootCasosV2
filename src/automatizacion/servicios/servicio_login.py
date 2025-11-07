@@ -5,30 +5,48 @@ Responsabilidad única: Manejar el ingreso de credenciales de usuario.
 import logging
 from typing import Optional, Callable
 from ..nucleo.gestor_navegador import GestorNavegador
-from src.core.config import config
+from ..modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
 
 
 class ServicioLogin:
     """Servicio responsable del ingreso de credenciales."""
     
-    def __init__(self, gestor_navegador: GestorNavegador, contexto: str, callback_log: Optional[Callable] = None):
+    def __init__(self, gestor_navegador: GestorNavegador, configuracion: ConfiguracionAutomatizacion, contexto: str, callback_log: Optional[Callable] = None):
         self.gestor_navegador = gestor_navegador
+        self.configuracion = configuracion
         self.contexto = contexto
         self.callback_log = callback_log
         self.logger = logging.getLogger(f"{__name__}.{contexto}")
         
-        # Credenciales del sistema
-        self.email = config.get('automation.login_email', '')
-        self.password = config.get('automation.login_password', '')
+        # Credenciales desde configuración centralizada
+        self.email = self.configuracion.usuario
+        self.password = self.configuracion.password
         
         self.logger.info(f"ServicioLogin inicializado para: {contexto}")
     
     def _log(self, mensaje: str, nivel: str = "info"):
-        """Envía log tanto al logger como al callback."""
-        getattr(self.logger, nivel)(mensaje)
+        """Envía log tanto al logger como al callback, sin emojis problemáticos."""
+        # Reemplazar emojis problemáticos
+        mensaje_limpio = (mensaje
+                         .replace("🧹", "[CLEAN]")
+                         .replace("📝", "[INPUT]")
+                         .replace("📧", "[EMAIL]")
+                         .replace("🔒", "[PASS]")
+                         .replace("✅", "[OK]")
+                         .replace("❌", "[ERROR]")
+                         .replace("⚠️", "[WARN]"))
+        
+        # Agregar información del método actual
+        import inspect
+        frame = inspect.currentframe().f_back
+        metodo_actual = frame.f_code.co_name
+        clase_actual = self.__class__.__name__
+        mensaje_con_contexto = f"[{clase_actual}.{metodo_actual}] {mensaje_limpio}"
+        
+        getattr(self.logger, nivel)(mensaje_con_contexto)
         if self.callback_log:
             try:
-                self.callback_log(f"{self.contexto}: {mensaje}", nivel, self.contexto)
+                self.callback_log(f"{self.contexto}: {mensaje_con_contexto}", nivel, self.contexto)
             except Exception:
                 pass
     
@@ -62,7 +80,7 @@ class ServicioLogin:
             return True
             
         except Exception as e:
-            self._log(f"❌ Error ingresando credenciales: {e}", "error")
+            self._log(f"[ERROR] Error ingresando credenciales: {e}", "error")
             return False
     
     async def _ingresar_email(self) -> bool:

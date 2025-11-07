@@ -3,29 +3,32 @@ Procesador de casos para automatización.
 Responsabilidad única: Procesar automatización específica para casos.
 """
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional, Callable
 
 from .procesador_base import ProcesadorBase
 from ..modelos.tarea_automatizacion import TareaAutomatizacion
 from ..modelos.resultado_proceso import ResultadoProceso
+from ..modelos.configuracion_automatizacion import ConfiguracionAutomatizacion
 from src.api.api_client import ApiClient
+from src.models.coosalud import RespuestaCasosDto
 
 
 class ProcesadorCasos(ProcesadorBase):
     """Procesador específico para automatización de casos."""
     
-    def __init__(self, callback_log: Optional[Callable] = None):
+    def __init__(self, configuracion: Optional[ConfiguracionAutomatizacion] = None, callback_log: Optional[Callable] = None):
         super().__init__("CASOS", callback_log)
         
         # Cliente API específico
         self.api_client = ApiClient()
-        self.base_url = "http://192.168.2.14:5000"
+        self.configuracion = configuracion if configuracion is not None else ConfiguracionAutomatizacion()
         
         self._log("ProcesadorCasos inicializado")
     
     async def obtener_datos(self) -> List[Dict[str, Any]]:
         """
-        Obtiene la lista de casos desde la API.
+        Obtiene la lista de casos desde la API usando DTOs.
         
         Returns:
             List[Dict]: Lista de casos para procesar
@@ -33,30 +36,44 @@ class ProcesadorCasos(ProcesadorBase):
         try:
             self._log("📡 Obteniendo datos de casos desde API...")
             
-            # Consultar API de casos
-            response = self.api_client.get(f"{self.base_url}/pacientes-casos")
+            # Consultar API de casos usando configuración centralizada
+            url_casos = self.configuracion.obtener_url_casos()
+            response = self.api_client.get(url_casos)
             
             if not response or response.get('status_code') != 200:
                 raise Exception(f"Error en API: {response.get('status_code')} - {response.get('error')}")
             
+            # Usar DTO para procesar la respuesta
             datos_api = response.get('data', {})
-            casos_lista = datos_api.get('data', [])
+            respuesta_dto = RespuestaCasosDto.from_api_response(datos_api)
             
-            if not casos_lista:
-                raise Exception("No se obtuvieron casos de la API")
+            if not respuesta_dto.es_exitosa():
+                raise Exception(f"Respuesta no exitosa: {respuesta_dto.message}")
             
-            # Convertir datos de API a formato estándar
+            # Obtener solo casos válidos
+            casos_validos = respuesta_dto.obtener_casos_validos()
+            
+            # Log estadísticas
+            stats = respuesta_dto.obtener_estadisticas()
+            self._log(f"📊 Casos obtenidos: {stats['total_casos']} total, {stats['casos_validos']} válidos")
+            
+            # Convertir DTOs a diccionarios para compatibilidad
             datos_casos = []
-            for caso_data in casos_lista:
+            for caso_dto in casos_validos:
                 datos_casos.append({
-                    'caso': caso_data.get('caso', ''),
-                    'fecha': caso_data.get('fecha', ''),
-                    'idIngreso': caso_data.get('idIngreso', 0),
-                    'idOrden': caso_data.get('idOrden', 0),
-                    'idRecepcion': caso_data.get('idRecepcion', 0)
+                    'caso': caso_dto.caso,
+                    'fecha': caso_dto.fecha,
+                    'idIngreso': caso_dto.id_ingreso,
+                    'idOrden': caso_dto.id_orden,
+                    'idRecepcion': caso_dto.id_recepcion,
+                    'identificador_unico': caso_dto.obtener_identificador_unico()
                 })
             
-            self._log(f"✅ {len(datos_casos)} casos obtenidos exitosamente")
+            if not datos_casos:
+                self._log("⚠️ No se encontraron casos válidos para procesar", "warning")
+                return []
+            
+            self._log(f"✅ Se obtuvieron {len(datos_casos)} casos válidos para procesar")
             return datos_casos
             
         except Exception as e:
@@ -397,8 +414,9 @@ class ProcesadorCasos(ProcesadorBase):
         try:
             self._log("🔍 Validando conexión API de casos...")
             
-            # Validar conexión con API
-            response = self.api_client.get(f"{self.base_url}/pacientes-casos")
+            # Validar conexión con API usando configuración centralizada
+            url_casos = self.configuracion.obtener_url_casos()
+            response = self.api_client.get(url_casos)
             if not response or response.get('status_code') not in [200, 404]:
                 raise Exception("API de casos no responde")
             
